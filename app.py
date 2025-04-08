@@ -566,59 +566,57 @@ def new_complaint():
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 file_path = filename
         
-        db = get_db()
         try:
-            # Find the appropriate admin based on category and escalation chain
-            escalation_chain = db.execute('''
-                SELECT * FROM escalation_chain 
-                WHERE category = ? 
-                ORDER BY position_level
-                LIMIT 1
-            ''', (category,)).fetchall()
-            
-            admin_id = None
-            if escalation_chain:
-                position = escalation_chain[0]['position_name']
-                admin = db.execute('''
-                    SELECT id FROM users 
-                    WHERE admin_position = ? 
-                    AND role = 'admin'
+            with DatabaseContext() as db:
+                # Find the appropriate admin based on category and escalation chain
+                escalation_chain = db.execute('''
+                    SELECT * FROM escalation_chain 
+                    WHERE category = ? 
+                    ORDER BY position_level
                     LIMIT 1
-                ''', (position,)).fetchone()
+                ''', (category,)).fetchall()
                 
-                if admin:
-                    admin_id = admin['id']
-            
-            # Insert the complaint using cursor
-            cursor = db.cursor()
-            cursor.execute('''
-                INSERT INTO complaints (
-                    student_id, admin_id, category, subcategory, description, 
+                admin_id = None
+                if escalation_chain:
+                    position = escalation_chain[0]['position_name']
+                    admin = db.execute('''
+                        SELECT id FROM users 
+                        WHERE admin_position = ? 
+                        AND role = 'admin'
+                        LIMIT 1
+                    ''', (position,)).fetchone()
+                    
+                    if admin:
+                        admin_id = admin['id']
+                
+                # Insert the complaint
+                cursor = db.cursor()
+                cursor.execute('''
+                    INSERT INTO complaints (
+                        student_id, admin_id, category, subcategory, description, 
+                        file_path, is_public, priority
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    session['user_id'], admin_id, category, subcategory, description, 
                     file_path, is_public, priority
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                session['user_id'], admin_id, category, subcategory, description, 
-                file_path, is_public, priority
-            ))
-            
-            complaint_id = cursor.lastrowid
-            db.commit()
-            
-            # If admin is assigned, notify them
-            if admin_id:
-                create_notification(
-                    admin_id,
-                    'New Complaint Assigned',
-                    f'A new complaint has been assigned to you. Please review and take action.',
-                    url_for('admin_view_complaint', complaint_id=complaint_id)
-                )
+                ))
+                
+                complaint_id = cursor.lastrowid
+                
+                # If admin is assigned, notify them
+                if admin_id:
+                    create_notification(
+                        admin_id,
+                        'New Complaint Assigned',
+                        f'A new complaint has been assigned to you. Please review and take action.',
+                        url_for('admin_view_complaint', complaint_id=complaint_id)
+                    )
             
             flash('Complaint submitted successfully', 'success')
             return redirect(url_for('student_dashboard'))
         except sqlite3.Error as e:
             flash(f'Error submitting complaint: {str(e)}', 'danger')
-        finally:
-            db.close()
+            return redirect(url_for('new_complaint'))
     
     return render_template('student/complaint.html', mode='new')
 
