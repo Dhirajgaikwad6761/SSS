@@ -350,22 +350,20 @@ def register():
             flash('All required fields must be filled', 'danger')
             return redirect(url_for('register'))
         
-        db = get_db()
         try:
-            db.execute(
-                'INSERT INTO users (username, password, role, full_name, email, phone) '
-                'VALUES (?, ?, ?, ?, ?, ?)',
-                (username, generate_password_hash(password), 'student', full_name, email, phone)
-            )
-            db.commit()
+            with DatabaseContext() as db:
+                db.execute(
+                    'INSERT INTO users (username, password, role, full_name, email, phone) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (username, generate_password_hash(password), 'student', full_name, email, phone)
+                )
+                
             flash('Registration successful. Please login.', 'success')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             flash('Username already exists', 'danger')
         except sqlite3.Error as e:
             flash(f'Database error occurred: {str(e)}', 'danger')
-        finally:
-            db.close()
     
     return render_template('auth/register.html')
 
