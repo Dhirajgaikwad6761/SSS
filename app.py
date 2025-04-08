@@ -16,15 +16,17 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))  # Use environment variable in production
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+
+# Reduce maximum content length to 8MB for free tier
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # 8MB max upload
 
 # File upload configuration
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx'}
 
-# Database configuration
+# Database configuration with timeout and optimization
 DATABASE_URL = os.environ.get('DATABASE_URL', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database.db'))
 app.config['DATABASE'] = DATABASE_URL
 
@@ -39,29 +41,42 @@ app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True') == 'True'
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'your-email@gmail.com')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'your-app-password')
 
-# Initialize extensions
+# Initialize extensions with optimized settings
 jwt = JWTManager(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=10, ping_interval=5)
 
-# Thread-local storage for database connections
+# Thread-local storage for database connections with timeout
 _local = threading.local()
 
 def get_db():
     if not hasattr(_local, 'db'):
-        _local.db = sqlite3.connect(app.config['DATABASE'])
+        _local.db = sqlite3.connect(
+            app.config['DATABASE'],
+            timeout=15,  # Add timeout
+            isolation_level=None  # Enable autocommit mode
+        )
         _local.db.row_factory = sqlite3.Row
+        # Enable WAL mode for better concurrent access
+        _local.db.execute('PRAGMA journal_mode=WAL')
+        # Set a smaller cache size
+        _local.db.execute('PRAGMA cache_size=-2000')  # Use about 2MB of memory
     return _local.db
 
+# Modify DatabaseContext to handle timeouts
 class DatabaseContext:
     def __enter__(self):
         self.db = get_db()
         return self.db
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
+        try:
+            if exc_type is not None:
+                self.db.rollback()
+            else:
+                self.db.commit()
+        except sqlite3.Error:
             self.db.rollback()
-        else:
-            self.db.commit()
+            raise
 
 def init_db():
     try:
