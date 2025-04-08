@@ -346,9 +346,12 @@ def login():
                     return redirect(url_for('home'))
                 
                 flash('Invalid username or password', 'danger')
-        except Exception as e:
-            flash('An error occurred during login', 'danger')
-            print(f"Login error: {str(e)}")
+                return redirect(url_for('login'))
+                
+        except sqlite3.Error as e:
+            app.logger.error(f"Login error: {str(e)}")
+            flash('An error occurred during login. Please try again.', 'danger')
+            return redirect(url_for('login'))
     
     return render_template('auth/login.html')
 
@@ -1232,6 +1235,9 @@ if __name__ == '__main__':
     # Initialize database
     with app.app_context():
         init_db()
-        
+    
+    # Get port from environment variable for Render
+    port = int(os.environ.get('PORT', 10000))
+    
     # Run the app with SocketIO
-    socketio.run(app, debug=True)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
